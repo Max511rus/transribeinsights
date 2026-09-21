@@ -1,138 +1,194 @@
-# Transcribe & Insight
+# 🚀 Transcribe & Insight
 
-Сервис транскрибации аудио/видео и AI-анализа через Groq API (Whisper + LLM).
+**Сервис транскрибации аудио/видео и AI-анализа через Groq API.**
 
-## Возможности
+Одна команда — и всё работает: Telegram-бот, HTTP API, генерация PDF.
 
-- 🎙️ **Транскрибация** — Groq Whisper API с автоопределением языка
-- 🧠 **AI-анализ** — 4 режима: выводы, конспект, резюме, план действий
-- 📄 **PDF-отчёты** — красиво оформленные документы с поддержкой русского
-- 🤖 **Telegram-бот** — отправка аудио/видео прямо в бота
-- 🔌 **REST API** — HTTP API для интеграции с сайтами
-- 📦 **Обработка больших файлов** — автоматическая разбивка на чанки
-
-## Структура проекта
-
-```
-transcribe-insight/
-├── config/          # Конфигурация
-├── core/            # Ядро: аудио, транскрибация, LLM, PDF
-├── api/             # FastAPI HTTP API
-├── bot/             # Telegram-бот (aiogram 3)
-├── templates/       # Jinja2 шаблоны для PDF
-├── tests/           # Тесты
-├── deploy/          # Скрипты деплоя, systemd, nginx
-├── data/            # Рабочие файлы задач
-└── .env.example     # Пример конфигурации
-```
-
-## Быстрый старт
-
-### 1. Клонировать и установить
+## ⚡ Быстрый старт (одна команда)
 
 ```bash
+# 1. Клонируйте репозиторий
 git clone <your-repo-url> transcribe-insight
 cd transcribe-insight
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
+
+# 2. Запустите установку
+sudo bash setup.sh
 ```
 
-### 2. Установить системные зависимости
+Скрипт **автоматически**:
+- ✅ Установит Python, ffmpeg, nginx, шрифты
+- ✅ Создаст виртуальное окружение и установит пакеты
+- ✅ Сгенерирует конфигурацию (.env)
+- ✅ Настроит systemd сервисы (API + бот)
+- ✅ Настроит Nginx и Firewall
+- ✅ Запустит всё
+
+От вас нужно только **2 ключа**:
+1. `GROQ_API_KEY` — получить на https://console.groq.com/keys
+2. `BOT_TOKEN` — получить у @BotFather в Telegram
+
+---
+
+## 🤖 Telegram-бот
+
+После установки отправьте боту:
+- `/start` — начать
+- Аудио или видео файл — бот предложит выбрать режим
+
+**4 режима обработки:**
+| Режим | Описание |
+|-------|----------|
+| 💡 `insights` | Ключевые выводы из записи |
+| 📚 `lecture` | Структурированный конспект |
+| 📝 `summary` | Краткое резюме |
+| 🎯 `action_plan` | План действий с задачами |
+
+**Результат:** transcript.txt + красивый PDF
+
+---
+
+## 🔌 HTTP API
+
+Все эндпоинты требуют `Authorization: Bearer <TOKEN>`
 
 ```bash
-sudo apt update
-sudo apt install -y ffmpeg python3-dev \
-  libpango1.0-dev libcairo2-dev libffi-dev \
-  fonts-noto fonts-noto-cjk
-```
-
-### 3. Настроить .env
-
-```bash
-cp .env.example .env
-nano .env
-```
-
-Обязательные переменные:
-- `GROQ_API_KEY` — ключ Groq API
-- `BOT_TOKEN` — токен Telegram-бота от @BotFather
-- `API_AUTH_TOKEN` — токен для HTTP API (сгенерируйте: `openssl rand -hex 32`)
-
-### 4. Запуск
-
-```bash
-# API сервер
-uvicorn api.app:app --host 0.0.0.0 --port 8000
-
-# Telegram-бот (в другом терминале)
-python -m bot.main
-```
-
-## Деплой на Ubuntu 22.04
-
-Полная инструкция в файле [deploy/INSTALL.md](deploy/INSTALL.md).
-
-Кратко:
-
-```bash
-# Сделать скрипт установки исполняемым
-chmod +x deploy/install.sh
-
-# Запустить установку
-sudo ./deploy/install.sh
-```
-
-## API Endpoints
-
-| Метод | Путь | Описание |
-|-------|------|----------|
-| GET | `/health` | Проверка здоровья |
-| POST | `/api/v1/tasks` | Создать задачу |
-| GET | `/api/v1/tasks/{id}` | Статус задачи |
-| GET | `/api/v1/tasks/{id}/transcript` | Транскрибация |
-| GET | `/api/v1/tasks/{id}/result` | Результат |
-| GET | `/api/v1/tasks/{id}/pdf` | Скачать PDF |
-
-### Пример
-
-```bash
-# Создать задачу
-curl -X POST https://your-domain.com/api/v1/tasks \
+# Загрузить файл
+curl -X POST http://your-domain/api/v1/tasks \
   -H "Authorization: Bearer YOUR_TOKEN" \
   -F "file=@meeting.mp3" \
   -F "mode=insights"
 
 # Проверить статус
-curl https://your-domain.com/api/v1/tasks/TASK_ID \
+curl http://your-domain/api/v1/tasks/TASK_ID \
   -H "Authorization: Bearer YOUR_TOKEN"
+
+# Скачать PDF
+curl http://your-domain/api/v1/tasks/TASK_ID/pdf \
+  -H "Authorization: Bearer YOUR_TOKEN" \
+  -o result.pdf
 ```
 
-## Режимы обработки
+**Эндпоинты:**
+| Метод | Путь | Описание |
+|-------|------|----------|
+| GET | `/health` | Проверка (без авторизации) |
+| POST | `/api/v1/tasks` | Создать задачу |
+| GET | `/api/v1/tasks/{id}` | Статус |
+| GET | `/api/v1/tasks/{id}/transcript` | Транскрибация |
+| GET | `/api/v1/tasks/{id}/result` | Результат |
+| GET | `/api/v1/tasks/{id}/pdf` | Скачать PDF |
 
-| Ключ | Название | Описание |
-|------|----------|----------|
-| `insights` | Ключевые выводы | Главные идеи, факты, рекомендации |
-| `lecture` | Конспект лекции | Структурированный конспект с тезисами |
-| `summary` | Краткое резюме | Сжатое изложение |
-| `action_plan` | План действий | Конкретные шаги и сроки |
+---
 
-## Telegram-бот
-
-Команды:
-- `/start` — начать работу
-- `/help` — справка
-- `/modes` — список режимов
-- `/status` — статус текущей задачи
-
-Отправьте боту аудио, голосовое сообщение или видео — он предложит выбрать режим обработки.
-
-## Тесты
+## 📋 Управление после установки
 
 ```bash
-pytest tests/ -v
+# Статус
+sudo systemctl status transcribe-api
+sudo systemctl status transcribe-bot
+
+# Перезапуск
+sudo systemctl restart transcribe-api transcribe-bot
+
+# Логи (в реальном времени)
+sudo journalctl -u transcribe-api -f
+sudo journalctl -u transcribe-bot -f
+
+# Остановить
+sudo systemctl stop transcribe-api transcribe-bot
 ```
 
-## Лицензия
+---
+
+## 🔄 Обновление
+
+```bash
+cd /opt/transcribe-insight
+sudo git pull
+sudo ./venv/bin/pip install -r requirements.txt
+sudo systemctl restart transcribe-api transcribe-bot
+```
+
+---
+
+## 🔒 SSL (Let's Encrypt)
+
+Если у вас есть домен:
+
+```bash
+sudo certbot --nginx -d your-domain.com
+```
+
+---
+
+## 📁 Структура проекта
+
+```
+transcribe-insight/
+├── setup.sh              # ⚡ Установка одной командой
+├── .env.example          # Пример конфигурации
+├── requirements.txt      # Python зависимости
+│
+├── config/               # Настройки
+│   └── settings.py
+│
+├── core/                 # Ядро
+│   ├── audio.py          # Обработка аудио (ffmpeg)
+│   ├── transcription.py  # Groq Whisper API
+│   ├── llm.py            # Groq LLM
+│   ├── pdf_generator.py  # Генерация PDF
+│   ├── prompts.py        # Промпты для 4 режимов
+│   ├── chunker.py        # Разбивка больших файлов
+│   ├── text_cleaner.py   # Очистка текста
+│   └── task_manager.py   # Управление задачами
+│
+├── api/                  # FastAPI HTTP API
+│   ├── app.py
+│   ├── routes.py
+│   └── auth.py
+│
+├── bot/                  # Telegram-бот
+│   ├── main.py
+│   └── handlers.py
+│
+├── templates/            # PDF шаблоны
+│   └── report.html
+│
+├── deploy/               # Деплой
+│   ├── setup.sh          # Расширенный установщик
+│   ├── install.sh        # Альтернативный установщик
+│   ├── INSTALL.md        # Ручная установка
+│   ├── nginx.conf
+│   ├── transcribe-api.service
+│   └── transcribe-bot.service
+│
+├── tests/                # Тесты
+│   ├── test_config.py
+│   ├── test_cleaner.py
+│   ├── test_prompts.py
+│   ├── test_llm.py
+│   └── test_chunker.py
+│
+└── src/                  # Frontend (React)
+    └── ...
+```
+
+---
+
+## 🛠 Технологии
+
+- **Python 3.10+** — основной язык
+- **FastAPI** — HTTP API
+- **aiogram 3** — Telegram-бот
+- **Groq API** — Whisper (транскрибация) + LLM (анализ)
+- **ffmpeg** — обработка аудио/видео
+- **WeasyPrint** — генерация PDF
+- **Jinja2** — шаблоны
+- **systemd** — автозапуск
+- **nginx** — reverse proxy
+
+---
+
+## 📝 Лицензия
 
 MIT
