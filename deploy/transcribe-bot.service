@@ -1,0 +1,23 @@
+[Unit]
+Description=Transcribe & Insight — Telegram Bot
+After=network.target
+
+[Service]
+Type=simple
+User=transcribe
+Group=transcribe
+WorkingDirectory=/opt/transcribe-insight
+Environment="PATH=/opt/transcribe-insight/venv/bin"
+ExecStart=/opt/transcribe-insight/venv/bin/python -m bot.main
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=transcribe-bot
+
+# Security
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
