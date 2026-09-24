@@ -61,7 +61,7 @@ class Settings(BaseSettings):
 
     # Storage
     data_dir: str = "./data"
-    retention_hours: int = 24
+    retention_hours: int = 168  # тексты хранятся неделю; аудио/видео удаляются сразу
 
     # Logging
     log_level: str = "INFO"

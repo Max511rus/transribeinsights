@@ -39,8 +39,25 @@ async def main():
     from bot.handlers import router
     dp.include_router(router)
 
+    # уборка: тексты старше RETENTION_HOURS (бот и API — разные процессы, у каждого своя)
+    from core.task_manager import task_manager
+
+    async def cleanup_loop():
+        while True:
+            try:
+                removed = task_manager.cleanup_old_tasks()
+                if removed:
+                    logger.info(f"Очистка: удалено {removed}")
+            except Exception as e:
+                logger.error(f"Ошибка очистки: {e}")
+            await asyncio.sleep(3600)
+
+    cleanup = asyncio.create_task(cleanup_loop())
     logger.info("Telegram-бот запускается...")
-    await dp.start_polling(bot)
+    try:
+        await dp.start_polling(bot)
+    finally:
+        cleanup.cancel()
 
 
 if __name__ == "__main__":

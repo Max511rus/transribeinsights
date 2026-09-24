@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import shutil
+import time
 import uuid
 from datetime import datetime, timedelta
 from enum import Enum
@@ -24,6 +25,10 @@ def describe_error(error: Exception) -> str:
         return ("Groq закрыл доступ (403): с этого сервера нужен VPN, "
                 "укажите GROQ_PROXY в .env (например socks5://127.0.0.1:1080)")
     return text
+
+
+# что остаётся в папке задачи после расшифровки: только тексты и результаты
+KEEP_FILES = {"transcript.txt", "result.md", "result.pdf"}
 
 
 class TaskStatus(str, Enum):
@@ -95,10 +100,15 @@ class TaskManager:
         task = Task(task_id, file_path, mode, file_name)
         task.work_dir.mkdir(parents=True, exist_ok=True)
 
-        # Скопировать файл в рабочую директорию
+        # Перенести файл в папку задачи (не копировать: видео бывают по гигабайту)
         dest = task.work_dir / "original" / file_name
         dest.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(file_path, str(dest))
+        shutil.move(file_path, str(dest))
+        task.file_path = str(dest)
+        # временная папка, куда файл был скачан, больше не нужна
+        parent = Path(file_path).parent
+        if parent != settings.data_path and parent.parent == settings.data_path and not any(parent.iterdir()):
+            parent.rmdir()
 
         self.tasks[task_id] = task
         logger.info(f"Задача создана: {task_id} ({file_name}, mode={mode})")
@@ -106,6 +116,17 @@ class TaskManager:
 
     def get_task(self, task_id: str) -> Optional[Task]:
         return self.tasks.get(task_id)
+
+    @staticmethod
+    def drop_media(task: Task) -> None:
+        """Удалить исходное аудио/видео и промежуточные файлы: остаётся только текст."""
+        for item in task.work_dir.iterdir() if task.work_dir.exists() else []:
+            if item.name in KEEP_FILES:
+                continue
+            if item.is_dir():
+                shutil.rmtree(item, ignore_errors=True)
+            else:
+                item.unlink(missing_ok=True)
 
     async def transcribe_task(self, task: Task) -> bool:
         """Шаг 1: аудио → текст (Whisper). Сохраняет transcript.txt.
@@ -136,6 +157,9 @@ class TaskManager:
             task.error = describe_error(e)
             logger.error(f"[{task.task_id}] Ошибка расшифровки: {e}")
             return False
+        finally:
+            # исходник больше не нужен ни после успеха, ни после ошибки
+            self.drop_media(task)
 
     async def analyze_task(self, task: Task, mode: str) -> bool:
         """Шаг 2: готовый текст → разбор в выбранном режиме (LLM) → PDF.
@@ -178,19 +202,27 @@ class TaskManager:
             await self.analyze_task(task, task.mode)
 
     def cleanup_old_tasks(self) -> int:
-        """Удалить старые задачи старше retention_hours."""
+        """Удалить задачи старше retention_hours (по умолчанию неделя).
+
+        Смотрит и на диск, а не только в память: бот и API — разные процессы,
+        и после перезапуска список задач в памяти пуст."""
         cutoff = datetime.utcnow() - timedelta(hours=settings.retention_hours)
+        cutoff_ts = time.time() - settings.retention_hours * 3600
         removed = 0
 
         for task_id, task in list(self.tasks.items()):
             if task.created_at < cutoff:
-                try:
-                    shutil.rmtree(task.work_dir, ignore_errors=True)
-                except Exception:
-                    pass
+                shutil.rmtree(task.work_dir, ignore_errors=True)
                 del self.tasks[task_id]
                 removed += 1
                 logger.info(f"Удалена старая задача: {task_id}")
+
+        for folder in settings.data_path.iterdir():
+            if folder.is_dir() and folder.stat().st_mtime < cutoff_ts:
+                shutil.rmtree(folder, ignore_errors=True)
+                self.tasks.pop(folder.name, None)
+                removed += 1
+                logger.info(f"Удалена старая папка: {folder.name}")
 
         return removed
 

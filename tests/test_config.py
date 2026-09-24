@@ -9,7 +9,7 @@ def test_default_settings():
     s = Settings()
     assert s.groq_whisper_model == "whisper-large-v3"
     assert s.max_file_size_mb == 25
-    assert s.retention_hours == 24
+    assert s.retention_hours == 168  # тексты хранятся неделю
 
 
 def test_audio_extensions():
