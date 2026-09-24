@@ -30,6 +30,10 @@ def get_llm_client() -> AsyncOpenAI:
     )
 
 
+class EmptyAnswer(RuntimeError):
+    """Ответ пустой после удаления рассуждений: повтор не поможет."""
+
+
 async def call_llm(system_prompt: str, user_prompt: str) -> str:
     """Вызвать Groq LLM с повторными попытками."""
     client = get_llm_client()
@@ -54,8 +58,16 @@ async def call_llm(system_prompt: str, user_prompt: str) -> str:
             logger.info(f"LLM ответ получен за {elapsed:.1f}с, "
                         f"токенов: {response.usage.total_tokens if response.usage else '?'}")
 
-            result = response.choices[0].message.content or ""
-            return clean_llm_output(result)
+            result = clean_llm_output(response.choices[0].message.content or "")
+            if not result:
+                raise EmptyAnswer(
+                    "Модель не успела дописать ответ (закончился лимит токенов на рассуждения). "
+                    "Увеличьте LLM_MAX_TOKENS в .env"
+                )
+            return result
+
+        except EmptyAnswer:
+            raise
 
         except Exception as e:
             error_str = str(e)
@@ -80,7 +92,12 @@ async def call_llm(system_prompt: str, user_prompt: str) -> str:
 
 
 def clean_llm_output(text: str) -> str:
-    """Очистить ответ LLM от код-блоков."""
+    """Очистить ответ LLM от размышлений (<think>…</think>) и код-блоков."""
+    # Qwen3 и другие «думающие» модели пишут рассуждения перед ответом
+    if "</think>" in text:
+        text = text.rsplit("</think>", 1)[1]
+    elif text.lstrip().startswith("<think>"):
+        text = ""  # ответ оборвался посреди рассуждений: увеличьте LLM_MAX_TOKENS
     text = text.strip()
 
     # Удалить обёртку ```markdown ... ```

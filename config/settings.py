@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     # Groq
     groq_api_key: str = ""
     groq_whisper_model: str = "whisper-large-v3"
-    groq_llm_model: str = "llama-3.3-70b-versatile"
+    groq_llm_model: str = "qwen/qwen3.8-27b"
     groq_base_url: str = "https://api.groq.com/openai/v1"
     groq_max_upload_mb: int = 25
     groq_chunk_size_mb: int = 20
@@ -47,7 +47,7 @@ class Settings(BaseSettings):
 
     # LLM
     llm_temperature: float = 0.3
-    llm_max_tokens: int = 4096
+    llm_max_tokens: int = 8192
     llm_chunk_size: int = 12000
     llm_chunk_overlap: int = 500
 
