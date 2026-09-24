@@ -7,8 +7,8 @@ Type=simple
 User=transcribe
 Group=transcribe
 WorkingDirectory=/opt/transcribe-insight
-Environment="PATH=/opt/transcribe-insight/venv/bin"
-ExecStart=/opt/transcribe-insight/venv/bin/uvicorn api.app:app --host 0.0.0.0 --port 8000 --workers 2
+Environment="PATH=/opt/transcribe-insight/venv/bin:/usr/local/bin:/usr/bin:/bin"
+ExecStart=/opt/transcribe-insight/venv/bin/uvicorn api.app:app --host 127.0.0.1 --port 8000 --workers 1
 Restart=always
 RestartSec=5
 StandardOutput=journal

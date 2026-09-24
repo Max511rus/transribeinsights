@@ -1,7 +1,7 @@
 """Telegram-бот: обработчики команд и сообщений."""
 from __future__ import annotations
 
-import asyncio
+import html
 import logging
 import tempfile
 from pathlib import Path
@@ -22,6 +22,18 @@ from core.task_manager import task_manager
 logger = logging.getLogger(__name__)
 
 router = Router()
+
+TELEGRAM_DOWNLOAD_LIMIT_MB = 20
+
+# расшифровки, ждущие выбора режима: user_id -> task_id
+_pending_tasks: dict = {}
+
+MODE_NAMES = {
+    "insights": "💡 Ключевые выводы",
+    "lecture": "📚 Конспект лекции",
+    "summary": "📝 Краткое резюме",
+    "action_plan": "🎯 План действий",
+}
 
 
 # --- Клавиатуры ---
@@ -69,7 +81,7 @@ async def cmd_start(message: Message):
         "Поддерживаемые форматы:\n"
         "🎵 Аудио: MP3, WAV, OGG, M4A, FLAC\n"
         "🎬 Видео: MP4, AVI, MKV, MOV, WebM\n\n"
-        "Максимальный размер: 25 МБ\n\n"
+        "Максимальный размер: 20 МБ (ограничение Telegram)\n\n"
         "Команды:\n"
         "/help — справка\n"
         "/modes — режимы обработки",
@@ -83,16 +95,16 @@ async def cmd_help(message: Message):
     await message.answer(
         "📖 <b>Как пользоваться:</b>\n\n"
         "1. Отправьте аудио или видео файл\n"
-        "2. Выберите режим обработки\n"
-        "3. Дождитесь результата\n"
-        "4. Получите transcript.txt и PDF\n\n"
+        "2. Сразу получите расшифровку в .txt\n"
+        "3. Выберите, что сделать с текстом\n"
+        "4. Получите PDF; можно выбрать ещё режим\n\n"
         "<b>Режимы:</b>\n"
         "💡 <b>Ключевые выводы</b> — главные идеи и факты\n"
         "📚 <b>Конспект</b> — структурированный конспект\n"
         "📝 <b>Резюме</b> — краткое изложение\n"
         "🎯 <b>План действий</b> — конкретные шаги\n\n"
         "<b>Ограничения:</b>\n"
-        "• Макс. размер файла: 25 МБ\n"
+        "• Макс. размер файла: 20 МБ (ограничение Telegram)\n"
         "• Обработка может занять 1-5 минут",
         parse_mode="HTML",
     )
@@ -154,10 +166,12 @@ async def handle_file(message: Message):
         return
 
     # Проверить размер
-    if file_obj.file_size and file_obj.file_size > settings.max_file_size_mb * 1024 * 1024:
+    # Telegram отдаёт ботам файлы не больше 20 МБ
+    limit_mb = min(settings.max_file_size_mb, TELEGRAM_DOWNLOAD_LIMIT_MB)
+    if file_obj.file_size and file_obj.file_size > limit_mb * 1024 * 1024:
         await message.answer(
             f"❌ Файл слишком большой: {file_obj.file_size / 1024 / 1024:.1f} МБ\n"
-            f"Максимум: {settings.max_file_size_mb} МБ"
+            f"Максимум: {limit_mb} МБ"
         )
         return
 
@@ -167,120 +181,84 @@ async def handle_file(message: Message):
     try:
         bot = message.bot
         file = await bot.get_file(file_obj.file_id)
-
-        # Сохранить во временную папку
         tmp_dir = tempfile.mkdtemp(dir=str(settings.data_path))
         file_path = str(Path(tmp_dir) / file_name)
-
         await bot.download_file(file.file_path, file_path)
-
-        # Сохранить путь к файлу в данных пользователя
-        # Используем chat_id как ключ для хранения pending file
-        pending_files = router.data.setdefault("pending_files", {})
-        pending_files[message.from_user.id] = {
-            "file_path": file_path,
-            "file_name": file_name,
-        }
-
-        await status_msg.edit_text(
-            f"✅ Файл получен: <b>{file_name}</b>\n\n"
-            f"Выберите режим обработки:",
-            reply_markup=get_modes_keyboard(),
-        )
-
     except Exception as e:
         logger.error(f"Ошибка скачивания файла: {e}")
-        await status_msg.edit_text(f"❌ Ошибка при скачивании файла: {e}")
+        await status_msg.edit_text(f"❌ Ошибка при скачивании файла: {html.escape(str(e))}")
+        return
+
+    # Шаг 1: расшифровка. Текст отправляется всегда, до выбора режима.
+    await status_msg.edit_text(f"🎧 Расшифровываю <b>{html.escape(file_name)}</b>…")
+    task = task_manager.create_task(file_path, "", file_name)
+    if not await task_manager.transcribe_task(task):
+        await status_msg.edit_text(
+            f"❌ <b>Не удалось расшифровать</b>\n\n📁 {html.escape(file_name)}\n\n{html.escape(task.error)}"
+        )
+        return
+
+    transcript_path = task.work_dir / "transcript.txt"
+    stem = Path(file_name).stem or "transcript"
+    await message.answer_document(
+        FSInputFile(str(transcript_path), filename=f"{stem}.txt"),
+        caption=f"📄 Расшифровка: {len(task.transcript.split())} слов",
+    )
+    await status_msg.delete()
+
+    # Шаг 2: что сделать с текстом
+    _pending_tasks[message.from_user.id] = task.task_id
+    await message.answer("Что сделать с текстом?", reply_markup=get_modes_keyboard())
 
 
 # --- Callback: выбор режима ---
 
 @router.callback_query(F.data.startswith("mode_"))
 async def handle_mode_selection(callback: CallbackQuery):
-    """Обработка выбора режима."""
+    """Разбор уже готовой расшифровки в выбранном режиме."""
     if not is_user_allowed(callback.from_user.id):
         await callback.answer("⛔ Нет доступа", show_alert=True)
         return
 
     mode = callback.data.replace("mode_", "")
-    valid_modes = ["insights", "lecture", "summary", "action_plan"]
-
-    if mode not in valid_modes:
+    if mode not in MODE_NAMES:
         await callback.answer("❌ Неизвестный режим", show_alert=True)
         return
 
-    # Получить сохранённый файл
-    pending_files = router.data.get("pending_files", {})
-    file_info = pending_files.pop(callback.from_user.id, None)
-
-    if not file_info:
-        await callback.message.edit_text(
-            "❌ Файл не найден. Отправьте файл заново."
-        )
+    task = task_manager.get_task(_pending_tasks.get(callback.from_user.id, ""))
+    if task is None or not task.transcript:
+        await callback.message.edit_text("❌ Расшифровка не найдена. Отправьте файл заново.")
         await callback.answer()
         return
 
     await callback.answer()
-
-    # Обновить сообщение
-    mode_names = {
-        "insights": "💡 Ключевые выводы",
-        "lecture": "📚 Конспект лекции",
-        "summary": "📝 Краткое резюме",
-        "action_plan": "🎯 План действий",
-    }
-
     await callback.message.edit_text(
-        f"⏳ <b>Обработка...</b>\n\n"
-        f"📁 Файл: {file_info['file_name']}\n"
-        f"🎛 Режим: {mode_names[mode]}\n\n"
-        f"Это может занять 1-5 минут.",
+        f"⏳ <b>{MODE_NAMES[mode]}</b>\n\n📁 {html.escape(task.file_name)}\n\nОбычно это занимает до минуты."
     )
 
-    # Создать и запустить задачу
-    task = task_manager.create_task(
-        file_info["file_path"],
-        mode,
-        file_info["file_name"],
-    )
-
-    # Обработать задачу
-    await task_manager.process_task(task)
-
-    # Отправить результат
-    if task.status.value == "completed":
-        try:
-            # transcript.txt
-            transcript_path = task.work_dir / "transcript.txt"
-            if transcript_path.exists():
-                await callback.message.answer_document(
-                    FSInputFile(str(transcript_path), filename="transcript.txt"),
-                    caption="📄 Транскрибация",
-                )
-
-            # PDF
-            if task.pdf_path and Path(task.pdf_path).exists():
-                await callback.message.answer_document(
-                    FSInputFile(task.pdf_path, filename="result.pdf"),
-                    caption=f"📊 Результат: {mode_names[mode]}",
-                )
-
-            # Preview
-            if task.result and len(task.result) < 3000:
-                await callback.message.answer(
-                    f"<b>📋 Превью:</b>\n\n{task.result[:2000]}",
-                    parse_mode="HTML",
-                )
-
-            await callback.message.answer("✅ Готово! Отправьте ещё файл для обработки.")
-
-        except Exception as e:
-            logger.error(f"Ошибка отправки результата: {e}")
-            await callback.message.answer(f"❌ Ошибка отправки файлов: {e}")
-    else:
+    if not await task_manager.analyze_task(task, mode):
         await callback.message.edit_text(
-            f"❌ <b>Ошибка обработки</b>\n\n"
-            f"📁 Файл: {file_info['file_name']}\n"
-            f"🎛 Режим: {mode_names[mode]}\n\n"
-            f"Ошибка: {task.error}",
+            f"❌ <b>Ошибка обработки</b>\n\n📁 {html.escape(task.file_name)}\n"
+            f"🎛 {MODE_NAMES[mode]}\n\n{html.escape(task.error)}\n\n"
+            "Расшифровка сохранена: можно выбрать режим ещё раз.",
+            reply_markup=get_modes_keyboard(),
         )
+        return
+
+    try:
+        stem = Path(task.file_name).stem or "result"
+        if task.pdf_path and Path(task.pdf_path).exists():
+            await callback.message.answer_document(
+                FSInputFile(task.pdf_path, filename=f"{stem}_{mode}.pdf"),
+                caption=MODE_NAMES[mode],
+            )
+        if task.result and len(task.result) < 3500:
+            await callback.message.answer(task.result, parse_mode=None)
+        await callback.message.delete()
+        await callback.message.answer(
+            "✅ Готово. Можно выбрать другой режим для этого же текста или отправить новый файл.",
+            reply_markup=get_modes_keyboard(),
+        )
+    except Exception as e:
+        logger.error(f"Ошибка отправки результата: {e}")
+        await callback.message.answer(f"❌ Ошибка отправки файлов: {html.escape(str(e))}")

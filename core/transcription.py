@@ -10,6 +10,7 @@ from typing import Optional
 from openai import AsyncOpenAI
 
 from config import settings
+from core.http import groq_http_client
 
 logger = logging.getLogger(__name__)
 
@@ -19,6 +20,7 @@ def get_whisper_client() -> AsyncOpenAI:
     return AsyncOpenAI(
         api_key=settings.groq_api_key,
         base_url=settings.groq_base_url,
+        http_client=groq_http_client(),
     )
 
 

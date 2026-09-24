@@ -15,6 +15,17 @@ from config import settings
 logger = logging.getLogger(__name__)
 
 
+def describe_error(error: Exception) -> str:
+    """Понятный текст ошибки для пользователя."""
+    text = str(error)
+    if "401" in text or "invalid_api_key" in text or "Invalid API Key" in text:
+        return "Groq отклонил ключ (401): проверьте GROQ_API_KEY в .env и перезапустите бота"
+    if "403" in text:
+        return ("Groq закрыл доступ (403): с этого сервера нужен VPN, "
+                "укажите GROQ_PROXY в .env (например socks5://127.0.0.1:1080)")
+    return text
+
+
 class TaskStatus(str, Enum):
     PENDING = "pending"
     PREPARING = "preparing"
@@ -83,72 +94,74 @@ class TaskManager:
     def get_task(self, task_id: str) -> Optional[Task]:
         return self.tasks.get(task_id)
 
-    async def process_task(self, task: Task) -> None:
-        """Обработать задачу (фоновый процесс)."""
+    async def transcribe_task(self, task: Task) -> bool:
+        """Шаг 1: аудио → текст (Whisper). Сохраняет transcript.txt.
+
+        Возвращает True, если расшифровка готова; иначе task.status = FAILED."""
         try:
             from core.audio import prepare_audio_file
             from core.transcription import transcribe_audio
             from core.text_cleaner import clean_transcript
-            from core.llm import process_with_llm
-            from core.pdf_generator import generate_pdf
 
-            # 1. Подготовка аудио
             task.status = TaskStatus.PREPARING
             task.progress = 10
             logger.info(f"[{task.task_id}] Подготовка аудио...")
-
             audio_path = await prepare_audio_file(task.file_path, str(task.work_dir))
 
-            # 2. Транскрибация
             task.status = TaskStatus.TRANSCRIBING
             task.progress = 25
             logger.info(f"[{task.task_id}] Транскрибация...")
-
             raw_transcript = await transcribe_audio(audio_path)
 
-            # 3. Очистка
             task.progress = 55
             task.transcript = clean_transcript(raw_transcript)
+            (task.work_dir / "transcript.txt").write_text(task.transcript, encoding="utf-8")
+            logger.info(f"[{task.task_id}] Расшифровка готова ({len(task.transcript)} символов)")
+            return True
+        except Exception as e:
+            task.status = TaskStatus.FAILED
+            task.error = describe_error(e)
+            logger.error(f"[{task.task_id}] Ошибка расшифровки: {e}")
+            return False
 
-            # Сохранить transcript.txt
-            transcript_path = task.work_dir / "transcript.txt"
-            transcript_path.write_text(task.transcript, encoding="utf-8")
+    async def analyze_task(self, task: Task, mode: str) -> bool:
+        """Шаг 2: готовый текст → разбор в выбранном режиме (LLM) → PDF.
 
-            # 4. Обработка LLM
+        Можно вызывать повторно с другим режимом: расшифровка не повторяется."""
+        try:
+            from core.llm import process_with_llm
+            from core.pdf_generator import generate_pdf
+
+            task.mode = mode
+            task.error = ""
             task.status = TaskStatus.PROCESSING
             task.progress = 65
-            logger.info(f"[{task.task_id}] Обработка LLM (mode={task.mode})...")
+            logger.info(f"[{task.task_id}] Обработка LLM (mode={mode})...")
+            task.result = await process_with_llm(task.transcript, mode)
+            (task.work_dir / "result.md").write_text(task.result, encoding="utf-8")
 
-            task.result = await process_with_llm(task.transcript, task.mode)
-
-            # Сохранить result.md
-            result_path = task.work_dir / "result.md"
-            result_path.write_text(task.result, encoding="utf-8")
-
-            # 5. Генерация PDF
             task.status = TaskStatus.GENERATING_PDF
             task.progress = 90
             logger.info(f"[{task.task_id}] Генерация PDF...")
-
             pdf_path = str(task.work_dir / "result.pdf")
-            generate_pdf(
-                text=task.result,
-                output_path=pdf_path,
-                mode=task.mode,
-                source_file=task.file_name,
-            )
+            generate_pdf(text=task.result, output_path=pdf_path, mode=mode, source_file=task.file_name)
             task.pdf_path = pdf_path
 
-            # Готово
             task.status = TaskStatus.COMPLETED
             task.progress = 100
             task.completed_at = datetime.utcnow()
             logger.info(f"[{task.task_id}] Задача завершена успешно")
-
+            return True
         except Exception as e:
             task.status = TaskStatus.FAILED
-            task.error = str(e)
-            logger.error(f"[{task.task_id}] Ошибка: {e}")
+            task.error = describe_error(e)
+            logger.error(f"[{task.task_id}] Ошибка обработки: {e}")
+            return False
+
+    async def process_task(self, task: Task) -> None:
+        """Полный цикл для HTTP API: расшифровка, затем разбор в task.mode."""
+        if await self.transcribe_task(task):
+            await self.analyze_task(task, task.mode)
 
     def cleanup_old_tasks(self) -> int:
         """Удалить старые задачи старше retention_hours."""

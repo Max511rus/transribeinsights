@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     bot_token: str = ""
     bot_allowed_users: str = ""
 
+    # VPN/прокси, если Telegram или Groq с сервера напрямую недоступны,
+    # например socks5://127.0.0.1:1080 (Xray). Пусто — напрямую.
+    telegram_proxy: str = ""
+    groq_proxy: str = ""
+
     # API
     api_auth_token: str = ""
     api_host: str = "0.0.0.0"

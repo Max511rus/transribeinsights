@@ -4,9 +4,13 @@ uvicorn[standard]==0.30.0
 python-dotenv==1.0.1
 python-multipart==0.0.9
 httpx==0.27.0
+# socks5:// для запросов к Groq (GROQ_PROXY)
+socksio==1.0.0
 
 # Telegram
 aiogram==3.13.0
+# SOCKS-прокси для Telegram (TELEGRAM_PROXY); 0.8.x не работает с aiohttp 3.10
+aiohttp-socks>=0.10
 
 # Groq / OpenAI SDK
 openai==1.51.0
@@ -29,5 +33,6 @@ pytest-asyncio==0.24.0
 pytest-mock==3.14.0
 
 # Utils
-pydantic==2.9.0
+# aiogram 3.13 требует pydantic < 2.9
+pydantic==2.8.2
 pydantic-settings==2.5.0

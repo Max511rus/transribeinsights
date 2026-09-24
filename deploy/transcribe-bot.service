@@ -7,7 +7,7 @@ Type=simple
 User=transcribe
 Group=transcribe
 WorkingDirectory=/opt/transcribe-insight
-Environment="PATH=/opt/transcribe-insight/venv/bin"
+Environment="PATH=/opt/transcribe-insight/venv/bin:/usr/local/bin:/usr/bin:/bin"
 ExecStart=/opt/transcribe-insight/venv/bin/python -m bot.main
 Restart=always
 RestartSec=5

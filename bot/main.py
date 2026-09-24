@@ -7,6 +7,7 @@ import sys
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
+from aiogram.client.session.aiohttp import AiohttpSession
 from aiogram.enums import ParseMode
 
 from config import settings
@@ -24,9 +25,13 @@ async def main():
         logger.error("BOT_TOKEN не задан в .env")
         sys.exit(1)
 
+    # TELEGRAM_PROXY в .env (например socks5://127.0.0.1:1080), если Telegram
+    # с сервера доступен только через VPN
+    session = AiohttpSession(proxy=settings.telegram_proxy) if settings.telegram_proxy else None
     bot = Bot(
         token=settings.bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
+        session=session,
     )
     dp = Dispatcher()
 
