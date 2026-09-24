@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     telegram_proxy: str = ""
     groq_proxy: str = ""
 
+    # веб-версия транскрибации: бот подскажет её для файлов больше 20 МБ
+    web_transcribe_url: str = ""
+
     # API
     api_auth_token: str = ""
     api_host: str = "0.0.0.0"
@@ -42,8 +45,8 @@ class Settings(BaseSettings):
     # Files
     max_file_size_mb: int = 25
     max_processing_minutes: int = 30
-    supported_audio_extensions: str = "mp3,wav,ogg,m4a,flac,aac,wma"
-    supported_video_extensions: str = "mp4,avi,mkv,mov,webm,flv,wmv"
+    supported_audio_extensions: str = "mp3,wav,ogg,oga,opus,m4a,flac,aac,wma,amr"
+    supported_video_extensions: str = "mp4,m4v,avi,mkv,mov,webm,flv,wmv,3gp"
 
     # LLM
     llm_temperature: float = 0.3

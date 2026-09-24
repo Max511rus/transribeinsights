@@ -127,7 +127,7 @@ async def cmd_modes(message: Message):
 
 # --- Обработка файлов ---
 
-@router.message(F.voice | F.audio | F.video | F.document)
+@router.message(F.voice | F.audio | F.video | F.video_note | F.document)
 async def handle_file(message: Message):
     """Обработка аудио/видео файлов."""
     if not is_user_allowed(message.from_user.id):
@@ -150,6 +150,10 @@ async def handle_file(message: Message):
         file_name = message.audio.file_name or f"audio_{message.audio.file_unique_id}.mp3"
         display_name = Path(message.audio.file_name or "").stem or (message.audio.title or "")
         file_ext = Path(file_name).suffix.lstrip(".").lower()
+    elif message.video_note:  # «кружочек»
+        file_obj = message.video_note
+        file_name = f"video_note_{message.video_note.file_unique_id}.mp4"
+        file_ext = "mp4"
     elif message.video:
         file_obj = message.video
         file_name = message.video.file_name or f"video_{message.video.file_unique_id}.mp4"
@@ -175,10 +179,11 @@ async def handle_file(message: Message):
     # Telegram отдаёт ботам файлы не больше 20 МБ
     limit_mb = min(settings.max_file_size_mb, TELEGRAM_DOWNLOAD_LIMIT_MB)
     if file_obj.file_size and file_obj.file_size > limit_mb * 1024 * 1024:
-        await message.answer(
-            f"❌ Файл слишком большой: {file_obj.file_size / 1024 / 1024:.1f} МБ\n"
-            f"Максимум: {limit_mb} МБ"
-        )
+        text = (f"❌ Файл слишком большой: {file_obj.file_size / 1024 / 1024:.1f} МБ\n"
+                f"Telegram отдаёт ботам файлы до {limit_mb} МБ.")
+        if settings.web_transcribe_url:
+            text += f"\n\nБольшие файлы можно расшифровать на сайте: {settings.web_transcribe_url}"
+        await message.answer(text, parse_mode=None)
         return
 
     # Скачать файл
