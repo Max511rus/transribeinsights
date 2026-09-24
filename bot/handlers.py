@@ -17,7 +17,8 @@ from aiogram.types import (
 )
 
 from config import settings
-from core.task_manager import task_manager
+from core.prompts import get_mode_title
+from core.task_manager import document_name, task_manager
 
 logger = logging.getLogger(__name__)
 
@@ -133,8 +134,10 @@ async def handle_file(message: Message):
         await message.answer("⛔ У вас нет доступа к этому боту.")
         return
 
-    # Определить тип файла
+    # Определить тип файла. display_name — имя, которое дал пользователь
+    # (у голосовых его нет, тогда в названиях файлов будет только дата)
     file_obj = None
+    display_name = ""
     file_name = "audio.ogg"
     file_ext = "ogg"
 
@@ -145,14 +148,17 @@ async def handle_file(message: Message):
     elif message.audio:
         file_obj = message.audio
         file_name = message.audio.file_name or f"audio_{message.audio.file_unique_id}.mp3"
+        display_name = Path(message.audio.file_name or "").stem or (message.audio.title or "")
         file_ext = Path(file_name).suffix.lstrip(".").lower()
     elif message.video:
         file_obj = message.video
         file_name = message.video.file_name or f"video_{message.video.file_unique_id}.mp4"
+        display_name = Path(message.video.file_name or "").stem
         file_ext = Path(file_name).suffix.lstrip(".").lower()
     elif message.document:
         file_obj = message.document
         file_name = message.document.file_name or "document"
+        display_name = Path(message.document.file_name or "").stem
         file_ext = Path(file_name).suffix.lstrip(".").lower()
 
     # Проверить расширение
@@ -190,18 +196,18 @@ async def handle_file(message: Message):
         return
 
     # Шаг 1: расшифровка. Текст отправляется всегда, до выбора режима.
-    await status_msg.edit_text(f"🎧 Расшифровываю <b>{html.escape(file_name)}</b>…")
+    await status_msg.edit_text("🎧 Расшифровываю…")
     task = task_manager.create_task(file_path, "", file_name)
+    task.display_name = display_name
     if not await task_manager.transcribe_task(task):
         await status_msg.edit_text(
-            f"❌ <b>Не удалось расшифровать</b>\n\n📁 {html.escape(file_name)}\n\n{html.escape(task.error)}"
+            f"❌ <b>Не удалось расшифровать</b>\n\n{html.escape(task.error)}"
         )
         return
 
     transcript_path = task.work_dir / "transcript.txt"
-    stem = Path(file_name).stem or "transcript"
     await message.answer_document(
-        FSInputFile(str(transcript_path), filename=f"{stem}.txt"),
+        FSInputFile(str(transcript_path), filename=document_name("Расшифровка", display_name, task.local_time, "txt")),
         caption=f"📄 Расшифровка: {len(task.transcript.split())} слов",
     )
     await status_msg.delete()
@@ -233,23 +239,22 @@ async def handle_mode_selection(callback: CallbackQuery):
 
     await callback.answer()
     await callback.message.edit_text(
-        f"⏳ <b>{MODE_NAMES[mode]}</b>\n\n📁 {html.escape(task.file_name)}\n\nОбычно это занимает до минуты."
+        f"⏳ <b>{MODE_NAMES[mode]}</b>\n\nОбычно это занимает до минуты."
     )
 
     if not await task_manager.analyze_task(task, mode):
         await callback.message.edit_text(
-            f"❌ <b>Ошибка обработки</b>\n\n📁 {html.escape(task.file_name)}\n"
-            f"🎛 {MODE_NAMES[mode]}\n\n{html.escape(task.error)}\n\n"
+            f"❌ <b>Ошибка обработки</b> ({MODE_NAMES[mode]})\n\n{html.escape(task.error)}\n\n"
             "Расшифровка сохранена: можно выбрать режим ещё раз.",
             reply_markup=get_modes_keyboard(),
         )
         return
 
     try:
-        stem = Path(task.file_name).stem or "result"
         if task.pdf_path and Path(task.pdf_path).exists():
+            pdf_name = document_name(get_mode_title(mode), task.display_name, task.local_time, "pdf")
             await callback.message.answer_document(
-                FSInputFile(task.pdf_path, filename=f"{stem}_{mode}.pdf"),
+                FSInputFile(task.pdf_path, filename=pdf_name),
                 caption=MODE_NAMES[mode],
             )
         if task.result and len(task.result) < 3500:

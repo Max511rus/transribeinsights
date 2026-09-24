@@ -51,6 +51,9 @@ class Task:
         self.pdf_path = ""
         self.error = ""
         self.created_at = datetime.utcnow()
+        # местное время для названий файлов и имя источника, если оно осмысленное
+        self.local_time = datetime.now()
+        self.display_name = ""
         self.completed_at: Optional[datetime] = None
 
     @property
@@ -68,6 +71,16 @@ class Task:
             "created_at": self.created_at.isoformat(),
             "completed_at": self.completed_at.isoformat() if self.completed_at else None,
         }
+
+
+def document_name(kind: str, display_name: str, when: datetime, ext: str) -> str:
+    """«Расшифровка 24.09.2026 16-41.txt» или «Конспект лекции — Лекция по SEO — 24.09.2026 16-41.pdf»."""
+    stamp = when.strftime("%d.%m.%Y %H-%M")
+    parts = [kind, display_name, stamp] if display_name else [kind, stamp]
+    name = " — ".join(parts) if display_name else " ".join(parts)
+    for bad in '/\\:*?"<>|':
+        name = name.replace(bad, "-")
+    return f"{name}.{ext}"
 
 
 class TaskManager:
@@ -144,7 +157,8 @@ class TaskManager:
             task.progress = 90
             logger.info(f"[{task.task_id}] Генерация PDF...")
             pdf_path = str(task.work_dir / "result.pdf")
-            generate_pdf(text=task.result, output_path=pdf_path, mode=mode, source_file=task.file_name)
+            generate_pdf(text=task.result, output_path=pdf_path, mode=mode, source_file=task.display_name,
+                         when=task.local_time)
             task.pdf_path = pdf_path
 
             task.status = TaskStatus.COMPLETED

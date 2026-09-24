@@ -140,10 +140,9 @@
     <div class="header">
         <h1>{{ title }}</h1>
         <div class="meta">
-            <span>📅 {{ date }}</span>
-            <span>🎛 Режим: {{ mode }}</span>
+            <span>{{ date }}</span>
             {% if source_file %}
-            <span>📁 {{ source_file }}</span>
+            <span>{{ source_file }}</span>
             {% endif %}
         </div>
     </div>
@@ -153,7 +152,7 @@
     </div>
 
     <div class="footer">
-        Сгенерировано с помощью Transcribe & Insight • {{ date }}
+        {{ title }} • {{ date }}
     </div>
 </body>
 </html>

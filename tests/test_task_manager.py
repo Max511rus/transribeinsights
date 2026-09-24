@@ -25,7 +25,7 @@ def manager(tmp_path, monkeypatch):
         calls["llm"].append(mode)
         return f"# {mode}\n{text}"
 
-    def generate_pdf(text, output_path, mode, source_file):
+    def generate_pdf(text, output_path, mode, source_file, when=None):
         open(output_path, "wb").write(b"%PDF")
 
     import core.audio, core.transcription, core.llm, core.pdf_generator
@@ -66,3 +66,18 @@ def test_invalid_key_is_explained(manager, monkeypatch):
     monkeypatch.setattr(core.transcription, "transcribe_audio", broken)
     assert not asyncio.run(manager.transcribe_task(task))
     assert "GROQ_API_KEY" in task.error and task.status == tm.TaskStatus.FAILED
+
+
+def test_document_names_are_human():
+    from datetime import datetime
+    when = datetime(2026, 9, 24, 16, 41)
+    assert tm.document_name("Расшифровка", "", when, "txt") == "Расшифровка 24.09.2026 16-41.txt"
+    assert (tm.document_name("Конспект лекции", "Лекция: SEO/2026", when, "pdf")
+            == "Конспект лекции — Лекция- SEO-2026 — 24.09.2026 16-41.pdf")
+
+
+def test_prompts_ask_for_content_not_recording():
+    from core.prompts import SYSTEM_PROMPT, get_user_prompt
+    assert "Никогда не упоминай «транскрибацию»" in SYSTEM_PROMPT
+    prompt = get_user_prompt("summary", "раз два три")
+    assert "около 3 слов" in prompt and "транскрибац" not in prompt.lower().replace("«транскрибацию»", "")

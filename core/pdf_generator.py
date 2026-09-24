@@ -21,6 +21,7 @@ def generate_pdf(
     output_path: str,
     mode: str = "insights",
     source_file: str = "",
+    when: datetime | None = None,
 ) -> str:
     """Сгенерировать PDF из Markdown-текста.
 
@@ -53,7 +54,7 @@ def generate_pdf(
 
     rendered_html = template.render(
         title=get_mode_title(mode),
-        date=datetime.now().strftime("%d.%m.%Y %H:%M"),
+        date=(when or datetime.now()).strftime("%d.%m.%Y %H:%M"),
         mode=mode,
         source_file=source_file,
         content=html_content,
