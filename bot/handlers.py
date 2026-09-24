@@ -4,6 +4,7 @@ from __future__ import annotations
 import html
 import logging
 import tempfile
+import time
 from pathlib import Path
 
 from aiogram import F, Router, types
@@ -19,12 +20,11 @@ from aiogram.types import (
 from config import settings
 from core.prompts import get_mode_title
 from core.task_manager import document_name, task_manager
+from core.tg_download import BOT_API_LIMIT_MB, download_big, limit_mb
 
 logger = logging.getLogger(__name__)
 
 router = Router()
-
-TELEGRAM_DOWNLOAD_LIMIT_MB = 20
 
 # расшифровки, ждущие выбора режима: user_id -> task_id
 _pending_tasks: dict = {}
@@ -176,11 +176,12 @@ async def handle_file(message: Message):
         return
 
     # Проверить размер
-    # Telegram отдаёт ботам файлы не больше 20 МБ
-    limit_mb = min(settings.max_file_size_mb, TELEGRAM_DOWNLOAD_LIMIT_MB)
-    if file_obj.file_size and file_obj.file_size > limit_mb * 1024 * 1024:
-        text = (f"❌ Файл слишком большой: {file_obj.file_size / 1024 / 1024:.1f} МБ\n"
-                f"Telegram отдаёт ботам файлы до {limit_mb} МБ.")
+    # Bot API отдаёт ботам файлы до 20 МБ; с api_id/api_hash большие качаем через MTProto
+    size = file_obj.file_size or 0
+    max_mb = limit_mb()
+    if size > max_mb * 1024 * 1024:
+        text = (f"❌ Файл слишком большой: {size / 1024 / 1024:.1f} МБ\n"
+                f"Бот принимает файлы до {max_mb} МБ.")
         if settings.web_transcribe_url:
             text += f"\n\nБольшие файлы можно расшифровать на сайте: {settings.web_transcribe_url}"
         await message.answer(text, parse_mode=None)
@@ -190,11 +191,14 @@ async def handle_file(message: Message):
     status_msg = await message.answer("⏳ Скачиваю файл...")
 
     try:
-        bot = message.bot
-        file = await bot.get_file(file_obj.file_id)
         tmp_dir = tempfile.mkdtemp(dir=str(settings.data_path))
         file_path = str(Path(tmp_dir) / file_name)
-        await bot.download_file(file.file_path, file_path)
+        if size > BOT_API_LIMIT_MB * 1024 * 1024:
+            await download_big(message.message_id, file_path, _progress_reporter(status_msg, size))
+        else:
+            bot = message.bot
+            file = await bot.get_file(file_obj.file_id)
+            await bot.download_file(file.file_path, file_path)
     except Exception as e:
         logger.error(f"Ошибка скачивания файла: {e}")
         await status_msg.edit_text(f"❌ Ошибка при скачивании файла: {html.escape(str(e))}")
@@ -220,6 +224,25 @@ async def handle_file(message: Message):
     # Шаг 2: что сделать с текстом
     _pending_tasks[message.from_user.id] = task.task_id
     await message.answer("Что сделать с текстом?", reply_markup=get_modes_keyboard())
+
+
+def _progress_reporter(status_msg: Message, total: int):
+    """Обновляет «Скачиваю…» не чаще раза в 5 секунд: Telegram ограничивает правки."""
+    state = {"last": 0.0}
+
+    async def report(current: int, _total: int) -> None:
+        now = time.monotonic()
+        if now - state["last"] < 5:
+            return
+        state["last"] = now
+        try:
+            await status_msg.edit_text(
+                f"⏳ Скачиваю большой файл: {current / 1024 ** 2:.0f} из {total / 1024 ** 2:.0f} МБ "
+                f"({current * 100 // max(total, 1)}%)")
+        except Exception:  # правка не удалась — не повод прерывать скачивание
+            pass
+
+    return report
 
 
 # --- Callback: выбор режима ---

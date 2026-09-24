@@ -36,6 +36,11 @@ class Settings(BaseSettings):
     # веб-версия транскрибации: бот подскажет её для файлов больше 20 МБ
     web_transcribe_url: str = ""
 
+    # api_id и api_hash приложения с my.telegram.org: с ними бот скачивает файлы
+    # до 2 ГБ через MTProto (без них — только до 20 МБ, ограничение Bot API)
+    telegram_api_id: str = ""
+    telegram_api_hash: str = ""
+
     # API
     api_auth_token: str = ""
     api_host: str = "0.0.0.0"

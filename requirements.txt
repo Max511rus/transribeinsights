@@ -11,6 +11,9 @@ socksio==1.0.0
 aiogram==3.13.0
 # SOCKS-прокси для Telegram (TELEGRAM_PROXY); 0.8.x не работает с aiohttp 3.10
 aiohttp-socks>=0.10
+# большие файлы (до 2 ГБ) через MTProto: TELEGRAM_API_ID / TELEGRAM_API_HASH
+telethon==1.40.0
+python-socks[asyncio]>=2.4
 
 # Groq / OpenAI SDK
 openai==1.51.0
