@@ -59,3 +59,38 @@ def test_empty_answer_is_reported(monkeypatch):
     monkeypatch.setattr(llm, "get_llm_client", lambda: C)
     with pytest.raises(llm.EmptyAnswer, match="LLM_MAX_TOKENS"):
         asyncio.run(llm.call_llm("s", "u"))
+
+
+def test_output_limit_and_reasoning_are_adjusted(monkeypatch):
+    import asyncio
+    import types
+
+    import core.llm as llm
+
+    calls = []
+
+    class C:
+        class chat:
+            class completions:
+                @staticmethod
+                async def create(**kw):
+                    calls.append((kw["max_tokens"], kw.get("extra_body")))
+                    if kw["max_tokens"] > 900:
+                        raise RuntimeError("Error code: 429 - Request too large for model on output tokens "
+                                           "per minute (OTPM): Limit 1000, Requested 1006")
+                    if kw.get("extra_body"):
+                        raise RuntimeError("Error code: 400 - `reasoning_effort` is not supported")
+                    msg = types.SimpleNamespace(content="# Итог")
+                    return types.SimpleNamespace(choices=[types.SimpleNamespace(message=msg)], usage=None)
+
+    monkeypatch.setattr(llm, "get_llm_client", lambda: C)
+    monkeypatch.setattr(llm, "_limits", {"output_cap": None, "reasoning_param": True})
+    monkeypatch.setattr(llm.settings, "llm_max_tokens", 8192)
+    assert asyncio.run(llm.call_llm("s", "u")) == "# Итог"
+    assert calls == [(8192, {"reasoning_effort": "none"}), (900, {"reasoning_effort": "none"}), (900, None)]
+
+
+def test_retry_delay_from_message():
+    from core.llm import _retry_delay
+    assert _retry_delay("Please try again in 7.5s.", 5) == 8.5
+    assert _retry_delay("no hint", 5) == 5

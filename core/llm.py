@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from typing import Optional
 
@@ -27,7 +28,24 @@ def get_llm_client() -> AsyncOpenAI:
         api_key=settings.groq_api_key,
         base_url=settings.groq_base_url,
         http_client=groq_http_client(),
+        max_retries=0,  # повторы и подстройку под лимиты делает call_llm
     )
+
+
+# Бесплатный тариф Groq ограничивает токены ответа в минуту (у Qwen — 1000).
+# Лимит узнаём из первого отказа и дальше просим не больше; рассуждения
+# модели отключаем (reasoning_effort=none), чтобы токены шли на сам ответ.
+_OUTPUT_LIMIT_RE = re.compile(r"output tokens per minute.*?Limit (\d+)", re.IGNORECASE | re.DOTALL)
+_RETRY_IN_RE = re.compile(r"try again in ([\d.]+)(ms|s|m)", re.IGNORECASE)
+_limits = {"output_cap": None, "reasoning_param": True}
+
+
+def _retry_delay(error_str: str, fallback: float) -> float:
+    match = _RETRY_IN_RE.search(error_str)
+    if not match:
+        return fallback
+    value, unit = float(match.group(1)), match.group(2).lower()
+    return min(120.0, value / 1000 if unit == "ms" else value * 60 if unit == "m" else value) + 1
 
 
 class EmptyAnswer(RuntimeError):
@@ -38,7 +56,11 @@ async def call_llm(system_prompt: str, user_prompt: str) -> str:
     """Вызвать Groq LLM с повторными попытками."""
     client = get_llm_client()
 
-    for attempt in range(settings.groq_max_retries):
+    attempt = 0
+    adjustments = 0
+    while attempt < settings.groq_max_retries:
+        max_tokens = min(settings.llm_max_tokens, _limits["output_cap"] or settings.llm_max_tokens)
+        extra = {"reasoning_effort": "none"} if _limits["reasoning_param"] else None
         try:
             start_time = time.time()
             logger.info(f"Отправка в LLM ({settings.groq_llm_model}), "
@@ -51,7 +73,8 @@ async def call_llm(system_prompt: str, user_prompt: str) -> str:
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=settings.llm_temperature,
-                max_tokens=settings.llm_max_tokens,
+                max_tokens=max_tokens,
+                extra_body=extra,
             )
 
             elapsed = time.time() - start_time
@@ -73,6 +96,18 @@ async def call_llm(system_prompt: str, user_prompt: str) -> str:
             error_str = str(e)
             logger.warning(f"LLM ошибка (попытка {attempt + 1}/{settings.groq_max_retries}): {error_str}")
 
+            # подстройка под лимиты тарифа: это не попытка, а исправление запроса
+            limit = _OUTPUT_LIMIT_RE.search(error_str)
+            if limit and adjustments < 3 and int(int(limit.group(1)) * 0.9) < max_tokens:
+                _limits["output_cap"] = max(128, int(int(limit.group(1)) * 0.9))
+                adjustments += 1
+                logger.info(f"Лимит ответа тарифа: {limit.group(1)} токенов/мин, просим {_limits['output_cap']}")
+                continue
+            if _limits["reasoning_param"] and "reasoning" in error_str.lower() and "400" in error_str and adjustments < 3:
+                _limits["reasoning_param"] = False
+                adjustments += 1
+                continue
+
             if "404" in error_str:
                 raise RuntimeError(
                     f"Модель '{settings.groq_llm_model}' не найдена в Groq. "
@@ -82,9 +117,10 @@ async def call_llm(system_prompt: str, user_prompt: str) -> str:
 
             if any(code in error_str for code in ["429", "500", "502", "503", "504"]):
                 if attempt < settings.groq_max_retries - 1:
-                    delay = settings.groq_retry_delay * (attempt + 1)
-                    logger.info(f"Повтор через {delay}с...")
+                    delay = _retry_delay(error_str, settings.groq_retry_delay * (attempt + 1))
+                    logger.info(f"Повтор через {delay:.0f}с...")
                     await asyncio.sleep(delay)
+                    attempt += 1
                     continue
             raise
 
