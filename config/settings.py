@@ -36,6 +36,12 @@ class Settings(BaseSettings):
     # веб-версия транскрибации: бот подскажет её для файлов больше 20 МБ
     web_transcribe_url: str = ""
 
+    # ссылки на видео (YouTube, VK, Rutube…): скачивается только звук через yt-dlp.
+    # URL_PROXY — если сайт с сервера недоступен; пусто — берётся GROQ_PROXY
+    url_proxy: str = ""
+    url_max_minutes: int = 240
+    url_max_file_size_mb: int = 2000
+
     # api_id и api_hash приложения с my.telegram.org: с ними бот скачивает файлы
     # до 2 ГБ через MTProto (без них — только до 20 МБ, ограничение Bot API)
     telegram_api_id: str = ""

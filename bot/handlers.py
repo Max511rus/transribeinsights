@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import html
 import logging
+import shutil
 import tempfile
 import time
 from pathlib import Path
@@ -21,6 +22,7 @@ from config import settings
 from core.prompts import get_mode_title
 from core.task_manager import document_name, task_manager
 from core.tg_download import BOT_API_LIMIT_MB, download_big, limit_mb
+from core.url_download import download_from_url, find_url
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +77,7 @@ async def cmd_start(message: Message):
     await message.answer(
         "👋 <b>Привет!</b>\n\n"
         "Я — <b>Transcribe & Insight</b>.\n\n"
-        "Отправь мне аудио или видео, и я:\n"
+        "Отправь мне аудио, видео или ссылку на видео (YouTube, VK, Rutube…), и я:\n"
         "• Транскрибирую его в текст\n"
         "• Проанализирую с помощью AI\n"
         "• Создам красивый PDF\n\n"
@@ -95,7 +97,7 @@ async def cmd_help(message: Message):
     """Команда /help."""
     await message.answer(
         "📖 <b>Как пользоваться:</b>\n\n"
-        "1. Отправьте аудио или видео файл\n"
+        "1. Отправьте аудио/видео файл или ссылку на видео\n"
         "2. Сразу получите расшифровку в .txt\n"
         "3. Выберите, что сделать с текстом\n"
         "4. Получите PDF; можно выбрать ещё режим\n\n"
@@ -120,7 +122,7 @@ async def cmd_modes(message: Message):
         "📚 <b>Конспект лекции</b> — структурированный конспект\n"
         "📝 <b>Краткое резюме</b> — сжатое изложение\n"
         "🎯 <b>План действий</b> — задачи и сроки\n\n"
-        "Отправьте файл, чтобы выбрать режим.",
+        "Отправьте файл или ссылку, чтобы выбрать режим.",
         parse_mode="HTML",
     )
 
@@ -204,7 +206,40 @@ async def handle_file(message: Message):
         await status_msg.edit_text(f"❌ Ошибка при скачивании файла: {html.escape(str(e))}")
         return
 
-    # Шаг 1: расшифровка. Текст отправляется всегда, до выбора режима.
+    await _transcribe_and_offer(message, status_msg, file_path, file_name, display_name)
+
+
+@router.message(F.text)
+async def handle_link(message: Message):
+    """Ссылка на видео (YouTube, VK, Rutube…): скачать звук и расшифровать, как файл."""
+    if not is_user_allowed(message.from_user.id):
+        await message.answer("⛔ У вас нет доступа к этому боту.")
+        return
+
+    url = find_url(message.text)
+    if not url:
+        await message.answer(
+            "Пришлите аудио, видео или ссылку на видео (YouTube, VK, Rutube и др.)."
+        )
+        return
+
+    status_msg = await message.answer("⏳ Скачиваю видео по ссылке…")
+    tmp_dir = tempfile.mkdtemp(dir=str(settings.data_path))
+    try:
+        file_path, title = await download_from_url(url, tmp_dir)
+    except Exception as e:
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        await status_msg.edit_text(
+            f"❌ <b>Не удалось скачать по ссылке</b>\n\n{html.escape(str(e))}"
+        )
+        return
+
+    await _transcribe_and_offer(message, status_msg, file_path, Path(file_path).name, title)
+
+
+async def _transcribe_and_offer(message: Message, status_msg: Message,
+                                file_path: str, file_name: str, display_name: str):
+    """Шаг 1: расшифровка — текст отправляется всегда, до выбора режима. Шаг 2: выбор режима."""
     await status_msg.edit_text("🎧 Расшифровываю…")
     task = task_manager.create_task(file_path, "", file_name)
     task.display_name = display_name
@@ -221,7 +256,6 @@ async def handle_file(message: Message):
     )
     await status_msg.delete()
 
-    # Шаг 2: что сделать с текстом
     _pending_tasks[message.from_user.id] = task.task_id
     await message.answer("Что сделать с текстом?", reply_markup=get_modes_keyboard())
 
